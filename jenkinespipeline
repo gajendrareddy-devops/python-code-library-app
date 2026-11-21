@@ -1,0 +1,125 @@
+pipeline {
+
+    agent {
+        label "prod"
+    }
+
+    environment {
+        FAILED_STAGE = 'Initializing'
+    }
+
+    stages {
+
+        stage('code') {
+            steps {
+                script {
+                    env.FAILED_STAGE = 'Code Checkout'
+                }
+
+                git 'https://github.com/gajendrareddy-devops/python-code-library-app.git'
+            }
+        }
+
+        stage('cqa') {
+            steps {
+                script {
+                    env.FAILED_STAGE = 'SonarQube Analysis'
+
+                    def scannerHome = tool 'sonarqube'
+
+                    withSonarQubeEnv('sonarqube') {
+                        sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=puka"
+                    }
+                }
+            }
+        }
+
+        stage('docker images') {
+            steps {
+                script {
+                    env.FAILED_STAGE = 'Docker Image Build'
+                }
+
+                sh 'docker build -t gajendrareddy/chinnu:auth auth'
+                sh 'docker build -t gajendrareddy/chinnu:database database'
+                sh 'docker build -t gajendrareddy/chinnu:book book'
+                sh 'docker build -t gajendrareddy/chinnu:borrow borrow'
+                sh 'docker build -t gajendrareddy/chinnu:front .'
+            }
+        }
+
+        stage('imagescan') {
+            steps {
+                script {
+                    env.FAILED_STAGE = 'Trivy Image Scan'
+                }
+
+                sh 'trivy image gajendrareddy/chinnu:auth'
+                sh 'trivy image gajendrareddy/chinnu:database'
+                sh 'trivy image gajendrareddy/chinnu:book'
+                sh 'trivy image gajendrareddy/chinnu:borrow'
+                sh 'trivy image gajendrareddy/chinnu:front'
+            }
+        }
+        stage('Approval') {
+    steps {
+        
+            input(
+                message: 'Do you approve deployment to Production?',
+                ok: 'Approve Deployment'
+            )
+        
+    }
+}
+
+        stage('deploy') {
+            steps {
+                script {
+                    env.FAILED_STAGE = 'Deployment'
+                }
+
+                sh 'docker stack deploy -c compose.yml myapp'
+            }
+        }
+    }
+
+    post {
+
+        success {
+            emailext(
+                to: 'chemalagajendra17@gmail.com',
+                subject: "SUCCESS: ${JOB_NAME} - Build #${BUILD_NUMBER}",
+                body: """
+                    Pipeline completed successfully!
+
+                    Job: ${JOB_NAME}
+                    Build Number: ${BUILD_NUMBER}
+                    Status: ${currentBuild.currentResult}
+                    Build URL: ${BUILD_URL}
+                """
+            )
+        }
+
+        failure {
+            emailext(
+                to: 'sheshusheshadri0@gmail.com',
+                subject: "FAILED: ${JOB_NAME} - Build #${BUILD_NUMBER}",
+                body: """
+                    Pipeline failed!
+
+                    Job: ${JOB_NAME}
+                    Build Number: ${BUILD_NUMBER}
+                    Failed Stage: ${env.FAILED_STAGE}
+                    Status: ${currentBuild.currentResult}
+                    Build URL: ${BUILD_URL}
+
+                    Please check Jenkins console output.
+                """
+            )
+        }
+
+        always {
+            echo "Post-build notification completed."
+        }
+    }
+}
